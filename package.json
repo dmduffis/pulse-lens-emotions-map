@@ -9,12 +9,27 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@atproto/api": "^0.18.3",
+    "@atproto/lexicon": "^0.5.2",
+    "@atproto/repo": "^0.8.11",
+    "@ipld/dag-cbor": "^9.2.5",
+    "@types/papaparse": "^5.5.0",
+    "axios": "^1.13.2",
+    "cbor": "^10.0.11",
+    "cbor-x": "^1.6.0",
+    "eventsource-parser": "^3.0.6",
+    "mapbox-gl": "^3.16.0",
     "next": "16.0.5",
+    "openai": "^6.9.1",
+    "papaparse": "^5.5.3",
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/geojson": "^7946.0.16",
+    "@types/mapbox-gl": "^3.4.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
