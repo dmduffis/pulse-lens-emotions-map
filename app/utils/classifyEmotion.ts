@@ -34,6 +34,10 @@ export async function classifyEmotion(text: string): Promise<EmotionResult> {
   }
 
   try {
+    // Add timeout to prevent hanging requests
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -64,7 +68,10 @@ Rules:
         temperature: 0.3, // Lower temperature for more consistent classification
         max_tokens: 50, // Minimal tokens needed for JSON response
       }),
+      signal: controller.signal,
     });
+    
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -96,7 +103,19 @@ Rules:
       confidence,
     };
   } catch (error) {
-    console.error('Error classifying emotion:', error);
+    // Only log network errors if they're not common (like missing API key or network issues)
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        // Timeout - don't log, just return neutral
+      } else if (error.message.includes('ENOTFOUND') || error.message.includes('fetch failed')) {
+        // Network/DNS error - log once but don't spam
+        console.warn('OpenAI API network error (may be offline or unreachable), using neutral emotions');
+      } else {
+        console.error('Error classifying emotion:', error.message);
+      }
+    } else {
+      console.error('Error classifying emotion:', error);
+    }
     // Return neutral on error to not break the flow
     return {
       emotion: 'neutral',
@@ -113,8 +132,25 @@ Rules:
 export async function classifyEmotionsBatch(
   texts: string[]
 ): Promise<EmotionResult[]> {
-  // Use Promise.all for parallel processing
-  return Promise.all(texts.map(text => classifyEmotion(text)));
+  // Batch processing to avoid overwhelming the API or network
+  // Process in chunks of 10 to reduce parallel load
+  const batchSize = 10;
+  const results: EmotionResult[] = [];
+  
+  for (let i = 0; i < texts.length; i += batchSize) {
+    const batch = texts.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(text => classifyEmotion(text))
+    );
+    results.push(...batchResults);
+    
+    // Small delay between batches to avoid rate limiting
+    if (i + batchSize < texts.length) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  
+  return results;
 }
 
 /**

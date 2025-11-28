@@ -1,9 +1,10 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useRef } from 'react';
-import Map from './components/Map';
-import ChatBox from './components/ChatBox';
-import type { GeoJSON } from 'geojson';
+import { useState, useEffect, useRef } from "react";
+import Map from "./components/Map";
+import ChatBox from "./components/ChatBox";
+import type { GeoJSON } from "geojson";
+import type { Emotion } from "./utils/classifyEmotion";
 
 // =====================
 // TYPES
@@ -53,21 +54,35 @@ interface AutocompleteSuggestion {
 // MAIN PAGE COMPONENT
 // =====================
 export default function Home() {
-  const [region, setRegion] = useState('');
+  const [region, setRegion] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [geoJson, setGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
-  const [center, setCenter] = useState<{ lat: number; lon: number } | null>(null);
-  const [emotionsSummary, setEmotionsSummary] = useState<EmotionsSummary | null>(null);
-  const [topPosts, setTopPosts] = useState<Array<{ text: string; emotion: string }>>([]);
-  const [currentRegion, setCurrentRegion] = useState<string>('');
-  
+  const [geoJson, setGeoJson] = useState<GeoJSON.FeatureCollection | null>(
+    null
+  );
+  const [center, setCenter] = useState<{ lat: number; lon: number } | null>(
+    null
+  );
+  const [emotionsSummary, setEmotionsSummary] =
+    useState<EmotionsSummary | null>(null);
+  const [topPosts, setTopPosts] = useState<
+    Array<{ text: string; emotion: string }>
+  >([]);
+  const [currentRegion, setCurrentRegion] = useState<string>("");
+
   // Autocomplete state
   const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
+
+  // Emotion filter state
+  const [selectedEmotions, setSelectedEmotions] = useState<Set<Emotion>>(
+    new Set()
+  );
+  const [originalGeoJson, setOriginalGeoJson] =
+    useState<GeoJSON.FeatureCollection | null>(null);
 
   // Firehose removed - now using NewsAPI instead
 
@@ -77,7 +92,7 @@ export default function Home() {
   const handleScan = async () => {
     // Validate region is not empty
     if (!region.trim()) {
-      setError('Please enter a region');
+      setError("Please enter a region");
       return;
     }
 
@@ -87,58 +102,74 @@ export default function Home() {
     try {
       // POST to /api/posts (region is trimmed but otherwise sent as-is)
       // Note: This may take a few seconds if the Firehose buffer is small and needs to accumulate posts
-      const response = await fetch('/api/posts', {
-        method: 'POST',
+      const response = await fetch("/api/posts", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ 
-          region: region.trim()
+        body: JSON.stringify({
+          region: region.trim(),
         }),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        const errorMessage = errorData.error || 'Failed to scan region';
-        
+        const errorMessage = errorData.error || "Failed to scan region";
+
         // Provide helpful error messages
         let userFriendlyError = errorMessage;
-        const errorDetails = errorData.details || '';
-        
+        const errorDetails = errorData.details || "";
+
         // Handle authentication errors
-        if (errorData.authError || errorMessage.includes('authentication') || errorMessage.includes('Invalid identifier') || errorMessage.includes('credentials not configured')) {
-          userFriendlyError = errorData.details || 'API authentication failed. Please check your credentials in the environment variables.';
+        if (
+          errorData.authError ||
+          errorMessage.includes("authentication") ||
+          errorMessage.includes("Invalid identifier") ||
+          errorMessage.includes("credentials not configured")
+        ) {
+          userFriendlyError =
+            errorData.details ||
+            "API authentication failed. Please check your credentials in the environment variables.";
         }
         // Handle rate limit errors
-        else if (errorData.rateLimited || errorMessage.includes('rate limit') || errorMessage.includes('Too Many Requests')) {
-          let rateLimitMsg = 'API rate limit exceeded.';
-          
-          if (errorMessage.includes('NewsAPI')) {
-            rateLimitMsg = 'NewsAPI rate limit exceeded.';
+        else if (
+          errorData.rateLimited ||
+          errorMessage.includes("rate limit") ||
+          errorMessage.includes("Too Many Requests")
+        ) {
+          let rateLimitMsg = "API rate limit exceeded.";
+
+          if (errorMessage.includes("NewsAPI")) {
+            rateLimitMsg = "NewsAPI rate limit exceeded.";
           }
-          
+
           if (errorData.rateLimitInfo?.reset) {
-            const resetTime = new Date(errorData.rateLimitInfo.reset).toLocaleTimeString();
+            const resetTime = new Date(
+              errorData.rateLimitInfo.reset
+            ).toLocaleTimeString();
             rateLimitMsg += ` Rate limit resets at ${resetTime}.`;
           } else if (errorData.details) {
             // Extract reset time from error details if available
             rateLimitMsg += ` ${errorData.details}`;
           } else {
-            rateLimitMsg += ' Please wait a few minutes before trying again.';
+            rateLimitMsg += " Please wait a few minutes before trying again.";
           }
-          
-          if (errorData.rateLimitInfo?.remaining !== null && errorData.rateLimitInfo.remaining !== undefined) {
+
+          if (
+            errorData.rateLimitInfo?.remaining !== null &&
+            errorData.rateLimitInfo.remaining !== undefined
+          ) {
             rateLimitMsg += ` (${errorData.rateLimitInfo.remaining} requests remaining)`;
           }
-          
+
           userFriendlyError = rateLimitMsg;
-        } else if (errorMessage === 'Region not found or invalid') {
+        } else if (errorMessage === "Region not found or invalid") {
           userFriendlyError = `Region "${region.trim()}" not found. Try: "City, State" or "City, Country" format`;
-        } else if (errorMessage === 'Failed to geocode region') {
+        } else if (errorMessage === "Failed to geocode region") {
           userFriendlyError = `Could not find "${region.trim()}". Try a different format like "City, State" or "City, Country"`;
-        } else if (errorMessage === 'No tweets found for this region') {
+        } else if (errorMessage === "No tweets found for this region") {
           userFriendlyError = `No tweets found for "${region.trim()}". Try a larger city or different region.`;
-        } else if (errorMessage === 'Failed to fetch tweets from Twitter API') {
+        } else if (errorMessage === "Failed to fetch tweets from Twitter API") {
           // Try to parse Twitter API error details
           try {
             const twitterError = JSON.parse(errorDetails);
@@ -149,7 +180,7 @@ export default function Home() {
             // If parsing fails, use the generic message
           }
         }
-        
+
         throw new Error(userFriendlyError);
       }
 
@@ -157,57 +188,58 @@ export default function Home() {
 
       // The API already returns geoJson formatted, so use it directly
       if (!data.geoJson) {
-        console.error('API did not return geoJson');
-        throw new Error('Invalid response from server: missing geoJson');
+        console.error("API did not return geoJson");
+        throw new Error("Invalid response from server: missing geoJson");
       }
 
       // Save into state
+      setOriginalGeoJson(data.geoJson); // Store original for filtering
       setGeoJson(data.geoJson);
       setCenter(data.coordinates);
       setEmotionsSummary(data.emotionsSummary);
       setTopPosts(data.topPosts);
       setCurrentRegion(data.region);
+      setSelectedEmotions(new Set()); // Reset filters when new data loads
 
       setLoading(false);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to scan region';
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to scan region";
       setError(errorMessage);
-      console.error('Error scanning region:', err);
+      console.error("Error scanning region:", err);
       setLoading(false);
     }
   };
 
-  // Fetch autocomplete suggestions from Mapbox
+  // Fetch autocomplete suggestions for countries only
   useEffect(() => {
     const fetchSuggestions = async () => {
-      if (!region.trim() || region.length < 2) {
+      if (!region.trim() || region.length < 1) {
         setSuggestions([]);
         setShowSuggestions(false);
         return;
       }
 
-      const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-      if (!mapboxToken) return;
+      // Use local country list for autocomplete (countries only, no cities)
+      const { filterCountries } = await import("@/utils/countries");
+      const filteredCountries = filterCountries(region);
 
-      try {
-        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(region)}.json?access_token=${mapboxToken}&limit=5&types=place,locality,neighborhood,region`;
-        const response = await fetch(url);
-        
-        if (response.ok) {
-          const data = await response.json();
-          setSuggestions(data.features || []);
-          setShowSuggestions(data.features && data.features.length > 0);
-          setSelectedIndex(-1);
-        }
-      } catch (err) {
-        console.error('Error fetching suggestions:', err);
-        setSuggestions([]);
-        setShowSuggestions(false);
-      }
+      // Convert country names to autocomplete format
+      const countrySuggestions: AutocompleteSuggestion[] =
+        filteredCountries.map((country) => ({
+          place_name: country,
+          text: country,
+          center: [0, 0], // Coordinates will be fetched when country is selected
+          context: [],
+        }));
+
+      setSuggestions(countrySuggestions);
+      setShowSuggestions(countrySuggestions.length > 0);
+      setSelectedIndex(-1);
     };
 
-    // Debounce API calls
-    const timeoutId = setTimeout(fetchSuggestions, 300);
+    // Debounce filtering
+    const timeoutId = setTimeout(fetchSuggestions, 200);
     return () => clearTimeout(timeoutId);
   }, [region]);
 
@@ -223,24 +255,24 @@ export default function Home() {
   // Handle keyboard navigation in suggestions
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (showSuggestions && suggestions.length > 0) {
-      if (e.key === 'ArrowDown') {
+      if (e.key === "ArrowDown") {
         e.preventDefault();
-        setSelectedIndex((prev) => 
+        setSelectedIndex((prev) =>
           prev < suggestions.length - 1 ? prev + 1 : prev
         );
-      } else if (e.key === 'ArrowUp') {
+      } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIndex((prev) => (prev > 0 ? prev - 1 : -1));
-      } else if (e.key === 'Enter' && selectedIndex >= 0) {
+      } else if (e.key === "Enter" && selectedIndex >= 0) {
         e.preventDefault();
         handleSelectSuggestion(suggestions[selectedIndex]);
-      } else if (e.key === 'Enter' && !loading && region.trim()) {
+      } else if (e.key === "Enter" && !loading && region.trim()) {
         setShowSuggestions(false);
         handleScan();
-      } else if (e.key === 'Escape') {
+      } else if (e.key === "Escape") {
         setShowSuggestions(false);
       }
-    } else if (e.key === 'Enter' && !loading && region.trim()) {
+    } else if (e.key === "Enter" && !loading && region.trim()) {
       handleScan();
     }
   };
@@ -258,12 +290,69 @@ export default function Home() {
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   // Default center for map when no data
-  const mapCenter = center || { lat: 40.7128, lon: -74.0060 };
+  const mapCenter = center || { lat: 40.7128, lon: -74.006 };
+
+  // Emotion colors matching the map
+  const emotionColors: Record<Emotion, string> = {
+    anger: "#FF4C4C",
+    fear: "#8B00FF",
+    sadness: "#4C79FF",
+    joy: "#FFD93D",
+    hope: "#4CFF4C",
+    neutral: "#AAAAAA",
+  };
+
+  const emotions: Emotion[] = [
+    "anger",
+    "sadness",
+    "fear",
+    "joy",
+    "hope",
+    "neutral",
+  ];
+
+  // Emotion filter handler
+  const toggleEmotionFilter = (emotion: Emotion) => {
+    setSelectedEmotions((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(emotion)) {
+        newSet.delete(emotion);
+      } else {
+        newSet.add(emotion);
+      }
+      return newSet;
+    });
+  };
+
+  // Filter geoJson by selected emotions
+  useEffect(() => {
+    if (!originalGeoJson) {
+      setGeoJson(null);
+      return;
+    }
+
+    // If no emotions selected, show all
+    if (selectedEmotions.size === 0) {
+      setGeoJson(originalGeoJson);
+      return;
+    }
+
+    // Filter features by selected emotions
+    const filtered = {
+      ...originalGeoJson,
+      features: originalGeoJson.features.filter((feature) => {
+        const emotion = feature.properties?.emotion as Emotion;
+        return emotion && selectedEmotions.has(emotion);
+      }),
+    };
+
+    setGeoJson(filtered);
+  }, [selectedEmotions, originalGeoJson]);
 
   return (
     <div className="flex w-full h-screen flex-col">
@@ -279,7 +368,7 @@ export default function Home() {
             <input
               ref={inputRef}
               type="text"
-              placeholder="Start typing a location (e.g. New York, Paris, London)..."
+              placeholder="Enter country (e.g. United States, France, Japan)..."
               value={region}
               onChange={(e) => {
                 setRegion(e.target.value);
@@ -295,7 +384,7 @@ export default function Home() {
               disabled={loading}
               className="border border-zinc-300 dark:border-zinc-700 px-3 py-2 rounded-lg w-full bg-white dark:bg-zinc-900 text-black dark:text-zinc-50 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
             />
-            
+
             {/* Autocomplete Suggestions Dropdown */}
             {showSuggestions && suggestions.length > 0 && (
               <div
@@ -309,29 +398,27 @@ export default function Home() {
                     onClick={() => handleSelectSuggestion(suggestion)}
                     className={`w-full text-left px-4 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors ${
                       index === selectedIndex
-                        ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500'
-                        : ''
-                    } ${index === 0 ? 'rounded-t-lg' : ''} ${
-                      index === suggestions.length - 1 ? 'rounded-b-lg' : ''
+                        ? "bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500"
+                        : ""
+                    } ${index === 0 ? "rounded-t-lg" : ""} ${
+                      index === suggestions.length - 1 ? "rounded-b-lg" : ""
                     }`}
                   >
                     <div className="font-medium text-sm text-black dark:text-zinc-50">
-                      {suggestion.text}
+                      {suggestion.text || suggestion.place_name}
                     </div>
                     <div className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
-                      {suggestion.context
-                        ?.map((ctx) => ctx.text)
-                        .join(', ')}
+                      Country
                     </div>
                   </button>
                 ))}
               </div>
             )}
-            
+
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
               {suggestions.length > 0
-                ? 'Select a suggestion or press Enter to search'
-                : 'Start typing to see location suggestions'}
+                ? "Select a suggestion or press Enter to search"
+                : "Start typing to see location suggestions"}
             </p>
           </div>
           <button
@@ -339,22 +426,87 @@ export default function Home() {
             disabled={loading || !region.trim()}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap mt-0"
           >
-            {loading ? 'Collecting posts…' : 'Scan Emotions'}
+            {loading ? "Collecting posts…" : "Scan Emotions"}
           </button>
         </div>
+
+        {/* Emotion Filter Pills */}
+        {geoJson && geoJson.features.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2 items-center">
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mr-2">
+              Filter by emotion:
+            </span>
+            {emotions.map((emotion) => {
+              const isSelected = selectedEmotions.has(emotion);
+              const count =
+                originalGeoJson?.features.filter(
+                  (f) => f.properties?.emotion === emotion
+                ).length || 0;
+
+              return (
+                <button
+                  key={emotion}
+                  onClick={() => toggleEmotionFilter(emotion)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                    isSelected
+                      ? "ring-2 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                      : "opacity-60 hover:opacity-100"
+                  }`}
+                  style={{
+                    backgroundColor: isSelected
+                      ? emotionColors[emotion]
+                      : `${emotionColors[emotion]}40`,
+                    color: isSelected ? "#ffffff" : emotionColors[emotion],
+                    borderColor: emotionColors[emotion],
+                    borderWidth: isSelected ? "2px" : "1px",
+                    ringColor: emotionColors[emotion],
+                  }}
+                >
+                  {emotion.charAt(0).toUpperCase() + emotion.slice(1)}
+                  {count > 0 && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-white/30 dark:bg-black/30">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+            {selectedEmotions.size > 0 && (
+              <button
+                onClick={() => setSelectedEmotions(new Set())}
+                className="px-3 py-1.5 rounded-full text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 border border-zinc-300 dark:border-zinc-600 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Error Display */}
       {error && (
         <div className="px-4 py-3 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800">
           <div className="flex items-start gap-2">
-            <svg className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <svg
+              className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
             </svg>
             <div className="flex-1">
-              <p className="text-sm font-medium text-red-800 dark:text-red-200">{error}</p>
+              <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                {error}
+              </p>
               <p className="text-xs text-red-700 dark:text-red-300 mt-1">
-                Tip: Use formats like "City, State" or "City, Country". For cities with common names, include the state/country.
+                Tip: Use formats like "City, State" or "City, Country". For
+                cities with common names, include the state/country.
               </p>
             </div>
             <button
@@ -362,8 +514,18 @@ export default function Home() {
               className="flex-shrink-0 text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 transition-colors"
               aria-label="Close error message"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>

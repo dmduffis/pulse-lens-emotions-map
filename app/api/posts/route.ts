@@ -1,24 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { classifyEmotionsBatch, generateEmotionsSummary, EmotionResult } from '../../utils/classifyEmotion';
-import { fetchNewsForCountry } from '@/utils/newsApiClient';
 import { fetchGdeltEvents } from '@/utils/gdeltClient';
-import { getCountryCode, countryCodeMap } from '@/utils/countryMap';
 import { formatMapData } from '@/utils/formatMapData';
 import type { GeoJSON } from 'geojson';
-
-// Helper to extract country code from region name
-function extractCountryFromRegion(region: string): string {
-  const lower = region.toLowerCase();
-  // Check if region contains a country name
-  for (const [countryName, code] of Object.entries(countryCodeMap)) {
-    if (countryName === "default") continue;
-    if (lower.includes(countryName)) {
-      return code;
-    }
-  }
-  // If no match, use getCountryCode helper
-  return getCountryCode(region);
-}
 
 // =====================
 // TYPES
@@ -140,53 +124,36 @@ export async function POST(request: NextRequest) {
     }
 
     // =====================
-    // STEP 3 — FETCH POSTS FROM MULTIPLE SOURCES
+    // STEP 3 — FETCH GDELT EVENTS
     // =====================
-    console.log(`Fetching posts${regionQuery ? ` for region: ${regionQuery}` : ' (global)'}...`);
+    // GDELT API only supports country-level filtering via sourcecountry parameter
+    // We need to extract the country from the region query (cities map to countries)
+    const { getCountryNameForGdelt } = await import('@/utils/countryMap');
+    const countryName = regionQuery ? getCountryNameForGdelt(regionQuery) : undefined;
     
-    // Get country code from region
-    const countryCode = regionQuery 
-      ? extractCountryFromRegion(regionQuery)
-      : countryCodeMap["default"];
+    if (regionQuery && !countryName) {
+      console.warn(`[Fetch] Could not map region "${regionQuery}" to a country. Skipping GDELT fetch.`);
+      // Continue without GDELT data rather than failing
+    } else {
+      console.log(`Fetching GDELT events${countryName ? ` for country: ${countryName}` : ' (global)'}...`);
+    }
     
-    console.log(`[Fetch] Mapped region "${regionQuery || 'global'}" to country code: ${countryCode}`);
+    // Fetch GDELT events - filter by country using query-based search
+    // Only fetch if we have a valid country name or no region specified (global search)
+    // Note: GDELT API has a maximum of 250 records per request
+    // Using 100 for testing
+    const gdeltPosts = countryName !== undefined || !regionQuery
+      ? await fetchGdeltEvents(100, countryName).catch(err => {
+          console.warn('[Fetch] GDELT error:', err);
+          return [];
+        })
+      : [];
     
-    // Extract main region name for NewsAPI search
-    const { extractMainRegion } = await import('@/utils/regionFilter');
-    const mainRegionName = regionQuery ? extractMainRegion(regionQuery) : undefined;
-    console.log(`[Fetch] Using region name for NewsAPI search: "${mainRegionName || 'country-level'}"`);
-    
-    // Fetch from multiple sources in parallel
-    // Fetch more articles to increase chances of finding city-specific content
-    const [newsPosts, gdeltPosts] = await Promise.all([
-      // Get NewsAPI posts - search by city name if available, otherwise by country
-      fetchNewsForCountry(countryCode, 200, mainRegionName).catch(err => {
-        console.warn('[Fetch] NewsAPI error:', err);
-        return [];
-      }),
-      // Get GDELT posts (geo-coded events) - use max 250
-      fetchGdeltEvents(250).catch(err => {
-        console.warn('[Fetch] GDELT error:', err);
-        return [];
-      }),
-    ]);
-    
-    console.log(`[Fetch] Retrieved ${newsPosts.length} news articles and ${gdeltPosts.length} GDELT events`);
-    
-    // Convert NewsPost format to uniform format
-    const newsPostsFormatted = newsPosts.map((newsPost, index) => ({
-      text: newsPost.text,
-      createdAt: new Date(newsPost.createdAt).toISOString(),
-      source: newsPost.source,
-      uri: newsPost.url || `newsapi-${index}`,
-      cid: `newsapi-${index}`,
-      lat: null,
-      lon: null,
-    }));
+    console.log(`[Fetch] Retrieved ${gdeltPosts.length} GDELT events`);
     
     // Convert GDELT format to uniform format
     // GDELT has coordinates, so we can use them directly
-    const gdeltPostsFormatted = gdeltPosts.map((gdeltPost, index) => ({
+    const combined = gdeltPosts.map((gdeltPost, index) => ({
       text: gdeltPost.text,
       createdAt: new Date(gdeltPost.createdAt).toISOString(),
       source: gdeltPost.source,
@@ -197,61 +164,28 @@ export async function POST(request: NextRequest) {
       tone: gdeltPost.tone, // Keep tone for potential use
     }));
     
-    // Combine all posts
-    const combined = [...newsPostsFormatted, ...gdeltPostsFormatted];
-    
     if (combined.length === 0) {
       return NextResponse.json(
         { 
           error: `No posts found for region: ${regionQuery || 'global'}`,
           region: regionName,
           coordinates: regionCoords,
-          suggestion: `Could not fetch posts from NewsAPI or GDELT. Make sure NEWSAPI_KEY is set in your environment variables, or try a different region.`
+          suggestion: `Could not fetch GDELT events for this region. Try a different region or wait a few minutes for new events to appear.`
         },
         { status: 404 }
       );
     }
     
-    console.log(`[Fetch] Combined ${combined.length} posts (${newsPostsFormatted.length} news, ${gdeltPostsFormatted.length} GDELT)`);
+    console.log(`[Fetch] Retrieved ${combined.length} GDELT events`);
     
-    // Apply region filtering if region is specified
-    // This filters posts by text content to match the specific region (e.g., "New York" not just "US")
+    // Since we're already filtering by country at the API level (sourcecountry parameter),
+    // we don't need to apply additional text-based region filtering for country searches.
+    // The GDELT API already ensures all returned articles are from sources in that country.
     let filteredPosts = combined;
-    if (regionQuery) {
-      const { filterByRegion, extractMainRegion } = await import('@/utils/regionFilter');
-      
-      // Extract just the main region name from the full autocomplete string
-      // e.g., "New York, New York, United States" -> "new york"
-      const mainRegionName = extractMainRegion(regionQuery);
-      console.log(`[Fetch] Applying region filter for: "${regionQuery}" -> extracted: "${mainRegionName}"`);
-      console.log(`[Fetch] Sample post text: "${combined[0]?.text?.substring(0, 100)}..."`);
-      
-      // Filter posts by region keywords using the extracted main region name
-      // This ensures we're matching against "new york" not the full geocoded string
-      filteredPosts = filterByRegion(combined as any, mainRegionName) as typeof combined;
-      console.log(`[Fetch] After region filtering: ${filteredPosts.length} posts (from ${combined.length} total) for region "${mainRegionName}"`);
-      
-      // If filtering removed all posts, that's a problem - log it
-      if (filteredPosts.length === 0 && combined.length > 0) {
-        console.warn(`[Fetch] WARNING: Region filter removed ALL posts! This might indicate the filter is too strict or posts don't contain region keywords.`);
-      }
-      
-      // If filtering removed all posts, that's a problem
-      // This means the posts don't contain the region keywords
-      // For now, we'll return an error rather than showing unrelated posts
-      if (filteredPosts.length === 0) {
-        console.warn(`[Fetch] Region filter removed ALL ${combined.length} posts for "${regionQuery}"`);
-        return NextResponse.json(
-          { 
-            error: `No posts found matching region: ${regionQuery}`,
-            region: regionName,
-            coordinates: regionCoords,
-            suggestion: `Found ${combined.length} posts but none mentioned "${regionQuery}" in the title or description. NewsAPI only filters by country, so city-specific filtering is limited. Try searching for a country instead, or a larger city.`
-          },
-          { status: 404 }
-        );
-      }
-    }
+    
+    // Only apply text-based filtering if we have posts and want to further refine
+    // For now, skip text filtering since country-level filtering is already done by the API
+    console.log(`[Fetch] Using ${combined.length} GDELT events (already filtered by country: ${countryName || 'global'})`);
     
     // Use filtered posts
     const posts = filteredPosts;
@@ -297,7 +231,7 @@ export async function POST(request: NextRequest) {
       emotion: post.emotion,
       // Don't set lat/lon - let formatMapData apply smart spreading
       source: post.source,
-      source_file: undefined, // NewsAPI posts don't have source_file
+      source_file: undefined,
     }));
 
     // formatMapData now expects UnifiedPost[] format, but we have postsWithEmotions
@@ -305,7 +239,7 @@ export async function POST(request: NextRequest) {
     const unifiedPosts = postsWithEmotions.map((post, index) => ({
       text: post.text,
       createdAt: post.created_at,
-      source: post.source as 'newsapi' | 'gdelt',
+      source: post.source as 'gdelt',
       uri: post.uri,
       cid: post.cid || `post-${index}`,
       lat: null, // Will be spread around region center

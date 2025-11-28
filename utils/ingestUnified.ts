@@ -46,9 +46,13 @@ export async function ingestUnified(region?: string): Promise<UnifiedPost[]> {
   });
 
   // ------------------------------
-  // 3. GDELT EVENTS (geo-coded)
+  // 3. GDELT EVENTS (country-filtered)
   // ------------------------------
-  const gdeltPosts = await fetchGdeltEvents(100).catch(err => {
+  // Get country name for GDELT API filtering
+  const { getCountryNameForGdelt } = await import('./countryMap');
+  const countryName = region ? getCountryNameForGdelt(region) : undefined;
+  
+  const gdeltPosts = await fetchGdeltEvents(100, countryName).catch(err => {
     console.warn('[Ingest] GDELT error:', err);
     return [];
   });
