@@ -5,6 +5,7 @@ import Map from "./components/Map";
 import ChatBox from "./components/ChatBox";
 import type { GeoJSON } from "geojson";
 import type { Emotion } from "./utils/classifyEmotion";
+import { ClipLoader } from "react-spinners";
 
 // =====================
 // TYPES
@@ -69,6 +70,7 @@ export default function Home() {
     Array<{ text: string; emotion: string }>
   >([]);
   const [currentRegion, setCurrentRegion] = useState<string>("");
+  const [loadingStep, setLoadingStep] = useState<string>("");
 
   // Autocomplete state
   const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
@@ -98,6 +100,31 @@ export default function Home() {
 
     setLoading(true);
     setError(null);
+    
+    // Simulate progress steps while API is processing
+    const progressSteps = [
+      { step: "Finding your location...", delay: 200 },
+      { step: "Gathering the latest news...", delay: 400 },
+      { step: "Reading through articles...", delay: 800 },
+      { step: "Understanding the stories...", delay: 600 },
+      { step: "Detecting emotions in the news...", delay: 1000 },
+      { step: "Preparing your map...", delay: 400 },
+      { step: "Almost ready...", delay: 300 },
+    ];
+    
+    let currentStepIndex = 0;
+    const updateProgress = () => {
+      if (currentStepIndex < progressSteps.length) {
+        setLoadingStep(progressSteps[currentStepIndex].step);
+        setTimeout(() => {
+          currentStepIndex++;
+          if (currentStepIndex < progressSteps.length) {
+            updateProgress();
+          }
+        }, progressSteps[currentStepIndex].delay);
+      }
+    };
+    updateProgress();
 
     try {
       // POST to /api/posts (region is trimmed but otherwise sent as-is)
@@ -201,13 +228,18 @@ export default function Home() {
       setCurrentRegion(data.region);
       setSelectedEmotions(new Set()); // Reset filters when new data loads
 
+      // Small delay to show completion
+      await new Promise(resolve => setTimeout(resolve, 200));
+
       setLoading(false);
+      setLoadingStep("");
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Failed to scan region";
       setError(errorMessage);
       console.error("Error scanning region:", err);
       setLoading(false);
+      setLoadingStep("");
     }
   };
 
@@ -359,8 +391,53 @@ export default function Home() {
       {/* Top Bar */}
       <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-black">
         {loading && (
-          <div className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">
-            ⏳ Fetching news articles... This may take a few seconds.
+          <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-lg shadow-sm">
+            <div className="flex items-center gap-3">
+              {/* Animated spinner - just spins, no resizing */}
+              <div className="shrink-0 w-8 h-8">
+                <ClipLoader
+                  color="#2563eb"
+                  loading={loading}
+                  size={32}
+                  speedMultiplier={0.8}
+                  aria-label="Loading"
+                  cssOverride={{
+                    display: 'block',
+                    width: '32px',
+                    height: '32px',
+                    borderWidth: '3px',
+                    animation: 'spin 1s linear infinite',
+                  }}
+                />
+              </div>
+              {/* Loading text with step */}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-1.5">
+                  {loadingStep || "Getting everything ready for you..."}
+                </p>
+                {/* Animated progress bar with wave effect */}
+                <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2.5 overflow-hidden relative">
+                  <div 
+                    className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-blue-500 bg-[length:200%_100%] rounded-full transition-all duration-700 ease-out relative overflow-hidden"
+                    style={{ 
+                      width: loadingStep.includes('Finding') ? '10%' : 
+                             loadingStep.includes('Gathering') ? '25%' : 
+                             loadingStep.includes('Reading') ? '45%' : 
+                             loadingStep.includes('Understanding') ? '60%' : 
+                             loadingStep.includes('Detecting') ? '80%' : 
+                             loadingStep.includes('Preparing') ? '90%' : 
+                             loadingStep.includes('Almost') ? '98%' : '15%',
+                      animation: 'gradient-shift 2s ease infinite'
+                    }}
+                  >
+                    {/* Animated wave effect */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
+                    {/* Pulsing dots on progress bar */}
+                    <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full shadow-lg animate-pulse"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
         <div className="flex gap-2 items-start">
@@ -549,6 +626,8 @@ export default function Home() {
             emotionsSummary={emotionsSummary}
             topTweets={topPosts}
             region={currentRegion}
+            currentRegion={currentRegion}
+            loading={loading}
           />
         )}
       </div>

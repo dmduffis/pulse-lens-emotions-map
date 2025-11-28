@@ -16,6 +16,8 @@ interface ChatBoxProps {
   };
   topTweets: Array<{ text: string; emotion: string }>;
   region: string;
+  loading?: boolean;
+  currentRegion?: string;
 }
 
 // =====================
@@ -29,7 +31,7 @@ interface Message {
 // =====================
 // CHAT BOX COMPONENT
 // =====================
-export default function ChatBox({ emotionsSummary, topTweets, region }: ChatBoxProps) {
+export default function ChatBox({ emotionsSummary, topTweets, region, loading: chatLoading, currentRegion }: ChatBoxProps) {
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -123,7 +125,7 @@ export default function ChatBox({ emotionsSummary, topTweets, region }: ChatBoxP
           PulseLens Assistant
         </h2>
         <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">
-          Ask about emotional trends in {region}
+          Ask about emotional trends in {currentRegion || region || 'the region'}
         </p>
       </div>
 
@@ -132,7 +134,7 @@ export default function ChatBox({ emotionsSummary, topTweets, region }: ChatBoxP
         {messages.length === 0 && (
           <div className="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-8">
             <p>Start a conversation about the emotional data</p>
-            <p className="mt-2 text-xs">Try asking: &quot;What emotions are most common?&quot;</p>
+            <p className="mt-2 text-xs">Try asking: &quot;What emotions are most common?&quot; or &quot;Tell me about the stories&quot;</p>
           </div>
         )}
 
@@ -177,8 +179,8 @@ export default function ChatBox({ emotionsSummary, topTweets, region }: ChatBoxP
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about the emotional data..."
-            disabled={loading}
+            placeholder="Ask about the emotional data or stories..."
+            disabled={loading || chatLoading}
             rows={1}
             className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-black dark:text-zinc-50 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
           />

@@ -12,7 +12,7 @@ interface EmotionsSummary {
   neutral: number;
 }
 
-interface TopTweet {
+interface TopArticle {
   text: string;
   emotion: string;
 }
@@ -20,7 +20,7 @@ interface TopTweet {
 interface ChatRequest {
   question: string;
   emotionsSummary: EmotionsSummary;
-  topTweets: TopTweet[];
+  topTweets: TopArticle[];
   region: string;
 }
 
@@ -78,55 +78,180 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate topTweets (optional but if provided should be array)
-    const tweets = Array.isArray(topTweets) ? topTweets.slice(0, 10) : [];
+    // Note: topTweets contains articles/stories, not tweets
+    // Use ALL articles for full context (no limit)
+    const articles = Array.isArray(topTweets) ? topTweets : [];
 
     // =====================
     // STEP 2 — CONSTRUCT PROMPT
     // =====================
-    const systemMessage = `You are PulseLens, an assistant that helps interpret emotional data from regions around the world. 
+    const systemMessage = `You are PulseLens — a calm, neutral, emotionally-aware assistant that helps users interpret emotional patterns and human experiences reflected in news articles and stories from around the world.
 
-You are NOT opinionated. You do NOT speculate unless data suggests it.
+Your purpose is to gently illuminate emotional trends, highlight meaningful themes, and help users understand the psychological climate of a region without being biased, alarmist, or speculative.
 
-Your job is to help users understand emotional trends, generate insights when asked, and brainstorm opportunities.
+Your tone is:
+- thoughtful and grounded  
+- emotionally intelligent  
+- human-centered  
+- analytical but warm  
+- never biased, never sensational  
 
-IMPORTANT: When answering questions, you MUST:
-- Reference specific tweets by number (e.g., "Tweet #3 shows...")
-- Include direct quotes from tweets to support your analysis
-- Use concrete examples from the provided tweets
-- Show the connection between the emotional summary and actual tweet content
+You do NOT take sides.  
+You do NOT guess.  
+You only speak from evidence found in the actual stories provided.
 
-Always stay neutral and do not invent facts.`;
+------------------------------------------------
+WHEN RESPONDING, YOU MUST FOLLOW THESE PRINCIPLES:
+------------------------------------------------
+
+1. **Translate non-English content**
+   If a story is written in another language, translate its title and any relevant excerpt into English before analyzing it.
+
+2. **Use clear article references**
+   - Include **2–3 example stories** when discussing trends.
+   - **CRITICAL: Group related articles together** - when multiple articles discuss the same topic, event, person, or story, you MUST group them together in a single section. Do NOT list them separately.
+   - Look for articles that mention the same person, event, location, or story - even if they use different wording or come from different sources.
+   - When grouping: First identify the common theme/topic, then list all related articles together (e.g., "Articles #3, #7, and #12 all cover the death of [person/event]...")
+   - Number them clearly: *Article #1, Article #2, etc.*
+   - **Always translate article titles** and format them as: "Original Title - Translated Title" (e.g., "Murió Claudio - Claudio Died")
+   - If a title is already in English, use it as-is without duplication.
+   - When articles cover the same story, identify the common theme FIRST, then reference ALL related articles together in one section before moving to the next topic.
+   - Provide brief direct quotes from the grouped articles to support your points.
+   - Ensure the emotional interpretation stays anchored to these quotes.
+
+3. **Summarize the emotional landscape**
+   - Identify the dominant emotions present (e.g., concern, hope, fear, grief).
+   - If emotions are mixed or conflicting, acknowledge this range.
+   - Always show how the emotional summary connects directly to the story content.
+
+4. **Do not invent or assume**
+   - Never create facts that are not in the provided stories.
+   - Never imply motives, causes, or outcomes unless the articles clearly indicate them.
+   - If evidence is weak or inconclusive, say so explicitly.
+
+5. **Handle sensitive topics responsibly**
+   - When stories involve trauma, violence, or distressing events, acknowledge the emotional weight calmly and respectfully.
+   - Avoid graphic detail.
+   - Prioritize clarity, empathy, and grounding.
+
+6. **Maintain neutrality**
+   - Avoid political, ideological, or cultural bias.
+   - Do not take sides in conflicts or disputes.
+   - Focus solely on the emotional signals within the stories.
+
+7. **When brainstorming insights or opportunities**
+   - Stay grounded in the emotional patterns you identified.
+   - Offer possibilities, not certainties.
+   - Frame insights as gentle guidance or observations, not predictions.
+
+8. **Handle low-data situations carefully**
+   - If there are too few stories to form a meaningful trend, say so.
+   - Provide a light, cautious interpretation rather than overstating conclusions.
+
+9. **Structure responses clearly**
+   - Use sections, bullet points, or lists when helpful.
+   - Keep explanations concise but meaningful.
+
+------------------------------------------------
+OVERALL MISSION:
+------------------------------------------------
+
+You exist to help users:
+- sense emotional patterns within regions
+- understand how people may be feeling in response to events
+- explore subtle shifts in collective tone
+- gain insight without misinformation
+- think creatively about implications or opportunities when requested
+
+You remain consistently supportive, neutral, and grounded — helping people see the emotional landscape revealed through news and stories across the world.`;
 
     // Build user message with structured data
+    // Format articles - the AI will translate titles and format them as "Original - Translated"
+    // Use full text (no truncation) for complete context
+    const formattedArticles = articles.length > 0 
+      ? articles.map((article, idx) => {
+          const articleNum = idx + 1;
+          const emotion = article.emotion;
+          // Use full text, no truncation - let AI handle long content
+          const text = article.text.replace(/"/g, '\\"').replace(/\n/g, ' ');
+          
+          // Format: Article #N [emotion]: "Full text..."
+          // The AI will identify the title, translate it, and format as "Original Title - Translated Title"
+          return `Article #${articleNum} [${emotion}]: "${text}"`;
+        }).join('\n\n')
+      : 'No sample articles provided';
+
+    // Build contextualized emotional summary based on the question
+    const questionLower = question.trim().toLowerCase();
+    
+    // Detect specific emotions mentioned in the question
+    const emotionCounts: Array<{emotion: string, count: number}> = [];
+    if (questionLower.includes('anger') || questionLower.includes('angry')) {
+      emotionCounts.push({emotion: 'anger', count: emotionsSummary.anger});
+    }
+    if (questionLower.includes('sadness') || questionLower.includes('sad')) {
+      emotionCounts.push({emotion: 'sadness', count: emotionsSummary.sadness});
+    }
+    if (questionLower.includes('fear') || questionLower.includes('afraid') || questionLower.includes('worried')) {
+      emotionCounts.push({emotion: 'fear', count: emotionsSummary.fear});
+    }
+    if (questionLower.includes('joy') || questionLower.includes('happy') || questionLower.includes('joyful')) {
+      emotionCounts.push({emotion: 'joy', count: emotionsSummary.joy});
+    }
+    if (questionLower.includes('hope') || questionLower.includes('hopeful')) {
+      emotionCounts.push({emotion: 'hope', count: emotionsSummary.hope});
+    }
+    if (questionLower.includes('neutral')) {
+      emotionCounts.push({emotion: 'neutral', count: emotionsSummary.neutral});
+    }
+    
+    const isEmotionSpecific = emotionCounts.length > 0;
+    const totalArticles = Object.values(emotionsSummary).reduce((a, b) => a + b, 0);
+    
+    // Build contextual summary
+    let contextualSummary = `Emotional Summary for ${region}:\n`;
+    
+    if (isEmotionSpecific) {
+      // Only show emotions relevant to the question
+      emotionCounts.forEach(({emotion, count}) => {
+        contextualSummary += `  ${emotion}: ${count} articles\n`;
+      });
+      contextualSummary += `  Total: ${totalArticles} articles`;
+    } else {
+      // Show full breakdown for general questions
+      contextualSummary += `  anger: ${emotionsSummary.anger}\n`;
+      contextualSummary += `  sadness: ${emotionsSummary.sadness}\n`;
+      contextualSummary += `  fear: ${emotionsSummary.fear}\n`;
+      contextualSummary += `  joy: ${emotionsSummary.joy}\n`;
+      contextualSummary += `  hope: ${emotionsSummary.hope}\n`;
+      contextualSummary += `  neutral: ${emotionsSummary.neutral}\n`;
+      contextualSummary += `  Total: ${totalArticles} articles`;
+    }
+
     const userMessage = `Question: ${question.trim()}
 
 Region: ${region}
 
-Emotional Summary:
-${JSON.stringify(emotionsSummary, null, 2)}
+${contextualSummary}
 
-Sample Tweets (${tweets.length} total):
-${tweets.length > 0 
-  ? tweets.map((tweet, idx) => {
-      const tweetNum = idx + 1;
-      const emotion = tweet.emotion;
-      const text = tweet.text.replace(/"/g, '\\"').replace(/\n/g, ' ').substring(0, 250);
-      return `Tweet #${tweetNum} [${emotion}]: "${text}"`;
-    }).join('\n\n')
-  : 'No sample tweets provided'
-}
+Sample Articles/Stories (${articles.length} total):
+${formattedArticles}
 
-Instructions:
-- ALWAYS reference specific tweets by number (e.g., "Tweet #5 demonstrates...", "As seen in Tweet #2...")
-- INCLUDE direct quotes from tweets to support your points
-- Use concrete examples: "For instance, Tweet #3 shows joy: 'This is amazing! I'm so happy...'"
-- Connect the emotional summary numbers to actual tweet examples
-- If asked about specific emotions, cite tweets that demonstrate those emotions
-- Give clear, structured insights with evidence from the tweets
-- If insufficient data, say so
-- Never hallucinate events
-- Never claim something "happened" unless it's in the tweet text
-- Focus on emotional interpretation with supporting evidence`;
+Additional Context:
+- Focus your response on the emotional patterns most relevant to the user's question
+- **CRITICAL: Group related articles together** - Before writing your response, scan all articles to identify which ones discuss the same person, event, topic, or story. Group ALL related articles together in a single section. Do NOT list them as separate stories.
+- Look for common elements: same person's name, same event, same location, same date, or clearly the same story even if worded differently
+- When you find related articles, structure your response as: "Several articles (#X, #Y, #Z) all discuss [common topic]. Article #X: 'Title - Translated Title'... Article #Y: 'Title - Translated Title'... Together, these reflect [emotional pattern]."
+- When referencing articles, translate their titles to English and format them as: "Original Title - Translated Title" (e.g., "Murió Claudio - Claudio Died")
+- Always show both the original and translated title when discussing articles
+- Use article numbers (Article #1, Article #2, etc.) when citing specific examples
+- When articles cover the same story, ALWAYS group them together - do not create separate sections for articles about the same event
+- Include 2-3 concrete article examples with translated titles when discussing stories or trends
+- Connect the emotional summary data directly to the story content you reference, especially emotions mentioned in the question
+- If an article's title is already in English, simply use it without duplication
+- Stay grounded in the evidence provided - never invent facts or assume causes
+- If data is insufficient to answer confidently, acknowledge this clearly
+- Maintain your calm, thoughtful, emotionally-aware tone throughout`;
 
     // =====================
     // STEP 3 — CALL OPENAI API
