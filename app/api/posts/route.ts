@@ -253,12 +253,12 @@ export async function POST(request: NextRequest) {
     // =====================
     // STEP 7 — PREPARE TOP POSTS (HIGHEST CONFIDENCE)
     // =====================
+    // Return ALL posts, not just top 20, so chatbot has full context
     const topPosts = postsWithEmotions
       .filter(post => post.text && post.text.length > 0)
       .sort((a, b) => b.emotion.confidence - a.emotion.confidence) // Sort by confidence descending
-      .slice(0, 10) // Top 10 highest confidence
       .map(post => ({
-        text: post.text.substring(0, 280),
+        text: post.text, // Return full text, no truncation
         emotion: post.emotion.emotion,
       }));
 
